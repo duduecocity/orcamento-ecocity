@@ -141,7 +141,9 @@ let marcados = new Set();
 let filtroAtual = 'aberto';
 let layers = {};
 
-const map = L.map('map').setView([-23.62,-46.62],10.6);
+const map = L.map('map');
+function enquadrar(){ map.setView([-23.590,-46.625], window.innerWidth<820?10.2:11); }
+enquadrar();
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
   attribution:'© OpenStreetMap | IBGE | Ecocity Transportes', maxZoom:17
 }).addTo(map);
@@ -168,7 +170,8 @@ const geoLayer = L.geoJSON(GEO,{
     layer.on('mouseout',()=>layer.setStyle(estilo(feat)));
   }
 }).addTo(map);
-map.fitBounds(geoLayer.getBounds(),{padding:[10,10]});
+window.addEventListener('resize',()=>{map.invalidateSize();});
+setTimeout(()=>{map.invalidateSize();enquadrar();},250);
 
 function toggle(n){
   marcados.has(n) ? marcados.delete(n) : marcados.add(n);
