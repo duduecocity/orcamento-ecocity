@@ -159,8 +159,85 @@ function phone(coverageStatus='eligible'){const a=document.createElement('a');a.
 const coverageCoordinator=EcocityCoverage.createRequestCoordinator();
 async function resolveCity(cep,signal){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),5000);if(signal){if(signal.aborted)controller.abort();else signal.addEventListener('abort',()=>controller.abort(),{once:true})}try{const response=await fetch(`https://viacep.com.br/ws/${cep}/json/`,{headers:{Accept:'application/json'},signal:controller.signal,cache:'no-store'});if(!response.ok)throw new Error();const address=await response.json();if(address.erro)throw new Error();return address.localidade||''}catch(_){return ''}finally{clearTimeout(timer)}}
 cepInput.addEventListener('input',function(){this.value=EcocityCoverage.formatCep(this.value)});
-form.addEventListener('submit',async(e)=>{e.preventDefault();const {controller,sequence}=coverageCoordinator.start();const valid=EcocityCoverage.validateCoverageInput(cepInput.value,numberInput.value);if(!valid.ok){show('error',valid.error==='cep_invalido'?'Informe um CEP válido com 8 números.':'Informe o número da obra.');return}coverageStarted=true;syncFloatingCta();show('error','Verificando o endereço…');emit('coverage_check_started',{coverage_stage:window.ECOCITY_PUBLIC_COVERAGE_ENABLED===true&&window.ECOCITY_COVERAGE_API_URL?'odoo_endpoint':'endpoint_pending'});const cep=EcocityCoverage.normalizeCep(cepInput.value),number=numberInput.value.trim();
-const check=await EcocityCoverage.checkCoverageWhenEnabled({enabled:window.ECOCITY_PUBLIC_COVERAGE_ENABLED,isEnabled:()=>window.ECOCITY_PUBLIC_COVERAGE_ENABLED===true,apiUrl:window.ECOCITY_COVERAGE_API_URL,cep,number,productCode:'CACAMBA_PADRAO',signal:controller.signal,timeoutMs:window.ECOCITY_COVERAGE_TIMEOUT_MS,cityResolver:resolveCity});if(!coverageCoordinator.isCurrent(sequence)||check.reason==='request_cancelled')return;if(check.reason==='coverage_disabled'){emit('coverage_manual_review',{coverage_stage:'endpoint_pending'});show('manual','A confirmação automática está indisponível no momento. Nosso escritório fará a conferência antes de confirmar o atendimento.');whatsapp({cep,number,city:'',request_id:''});return}const city=check.city||'';const officeData={cep,number,city,request_id:check.request_id||''};if(check.status==='eligible'){emit('coverage_eligible',{coverage_region:check.region_name||'',coverage_city:city});show('eligible','<strong>Endereço em região atendida.</strong> A disponibilidade será confirmada no orçamento.');whatsapp(officeData,'Continuar com o escritório','eligible');phone('eligible');return}if(check.status==='ineligible'){emit('coverage_ineligible',{coverage_city:city});show('ineligible','Este endereço está fora da cobertura atual.');return}if(check.status==='error'&&check.reason==='input_invalid'){show('error','Não foi possível validar os dados. Confira o CEP e o número e faça uma nova consulta.');return}if(check.status==='manual_review'&&check.reason==='rate_limited'){show('manual',`O serviço recebeu muitas consultas. Aguarde ${check.retry_after?`${check.retry_after} segundos`:'alguns instantes'} antes de tentar novamente; não faremos nova tentativa automática.`);whatsapp(officeData);return}emit('coverage_manual_review',{coverage_stage:'odoo_manual_review',coverage_reason:check.reason||'',partial_coverage:check.partial_coverage===true});if(check.partial_coverage===true){show('manual','Atendemos parcialmente essa região. Vamos confirmar seu endereço com nosso escritório antes de confirmar o atendimento.');whatsapp(officeData);return}show('manual','Não foi possível confirmar automaticamente a região de atendimento. Nosso escritório fará a conferência antes de confirmar o atendimento.');whatsapp(officeData);return});
+let addressVersion = 0;
+function resetCoverageResult() {
+  addressVersion += 1;
+  result.className = 'result';
+  result.replaceChildren();
+}
+cepInput.addEventListener('input', resetCoverageResult);
+numberInput.addEventListener('input', resetCoverageResult);
+
+form.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const { controller, sequence } = coverageCoordinator.start();
+  const checkedVersion = addressVersion;
+  const valid = EcocityCoverage.validateCoverageInput(cepInput.value, numberInput.value);
+  if (!valid.ok) {
+    show('error', valid.error === 'cep_invalido' ? 'Informe um CEP válido com 8 números.' : 'Informe o número da obra.');
+    return;
+  }
+
+  coverageStarted = true;
+  syncFloatingCta();
+  show('error', 'Verificando o endereço…');
+  emit('coverage_check_started', {
+    coverage_stage: window.ECOCITY_PUBLIC_COVERAGE_ENABLED === true && window.ECOCITY_COVERAGE_API_URL ? 'odoo_endpoint' : 'endpoint_pending',
+  });
+  const cep = EcocityCoverage.normalizeCep(cepInput.value);
+  const number = numberInput.value.trim();
+  const check = await EcocityCoverage.checkCoverageWhenEnabled({
+    enabled: window.ECOCITY_PUBLIC_COVERAGE_ENABLED,
+    isEnabled: () => window.ECOCITY_PUBLIC_COVERAGE_ENABLED === true,
+    apiUrl: window.ECOCITY_COVERAGE_API_URL,
+    cep, number, productCode: 'CACAMBA_PADRAO', signal: controller.signal,
+    timeoutMs: window.ECOCITY_COVERAGE_TIMEOUT_MS, cityResolver: resolveCity,
+  });
+  if (addressVersion !== checkedVersion || !coverageCoordinator.isCurrent(sequence) || check.reason === 'request_cancelled') return;
+
+  const city = check.city || '';
+  const officeData = { cep, number, city, request_id: check.request_id || '' };
+  if (check.status === 'eligible') {
+    emit('coverage_eligible', {coverage_region: check.region_name || '', coverage_city: city});
+    show('eligible', '<strong>Endereço em região atendida.</strong> A disponibilidade será confirmada no orçamento.');
+    whatsapp(officeData,'Continuar com o escritório','eligible');
+    phone('eligible');
+    return;
+  }
+  if (check.status === 'ineligible') {
+    emit('coverage_ineligible', {coverage_city: city});
+    show('ineligible', '<strong>Não atendemos este endereço.</strong> A obra fica fora da nossa área de atendimento.');
+    return;
+  }
+  if (check.reason === 'input_invalid') {
+    show('error', 'Confira o CEP e o número da obra e consulte novamente.');
+    return;
+  }
+
+  emit('coverage_manual_review', {
+    coverage_stage: check.reason === 'coverage_disabled' ? 'endpoint_pending' : 'odoo_manual_review',
+    coverage_reason: check.reason || '', partial_coverage: check.partial_coverage === true,
+  });
+  if (check.partial_coverage === true) {
+    show('manual', '<strong>Atendemos parte dessa região.</strong> O escritório precisa conferir o endereço da obra antes do orçamento.');
+    whatsapp(officeData);
+    return;
+  }
+  if (check.reason === 'ambiguous_geocode' || check.reason === 'zero_or_multiple_regions') {
+    show('manual', '<strong>A localização da obra precisa de conferência.</strong> Confira o CEP e o número da entrada da obra nos campos acima e consulte novamente.');
+    return;
+  }
+  if (check.reason === 'rate_limited') {
+    show('manual', `Aguarde ${check.retry_after ? check.retry_after + ' segundos' : 'alguns instantes'} e consulte novamente.`);
+    return;
+  }
+  if (check.reason === 'regional_exception' || check.reason === 'product_unavailable') {
+    show('manual', 'O escritório precisa conferir as condições de atendimento para esta obra antes do orçamento.');
+    whatsapp(officeData);
+    return;
+  }
+  show('manual', 'A consulta de cobertura está temporariamente indisponível. Tente novamente em alguns instantes.');
+});
 function trackWhatsApp(coverageStatus,cta){return window.EcocityTracking?window.EcocityTracking.trackEligibleWhatsApp(coverageStatus,cta):false}
 function trackPhone(coverageStatus,cta){return window.EcocityTracking?window.EcocityTracking.trackEligiblePhone(coverageStatus,cta):false}
 </script>
